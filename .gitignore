@@ -4,3 +4,9 @@
 nlp_recommender/Seq2seq/__pycache__/
 
 nlp_recommender/W2v/__pycache__/
+
+nlp_recommender/.idea/
+
+nlp_recommender/elmo/__pycache__/
+
+nlp_recommender/elmo/MRPC/
