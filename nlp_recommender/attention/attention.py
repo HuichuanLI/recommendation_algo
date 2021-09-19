@@ -27,6 +27,21 @@ def Mask(inputs, seq_len, mode='mul'):
             return inputs - (1 - mask) * 1e12
 
 
+def extract_seq_patches(x, kernel_size, rate):
+    """x.shape = [None, seq_len, seq_dim]
+    滑动地把每个窗口的x取出来，为做局部attention作准备。
+    """
+    seq_dim = tf.shape(x)[-1]
+    seq_len = tf.shape(x)[1]
+    k_size = kernel_size + (rate - 1) * (kernel_size - 1)
+    p_right = (k_size - 1) // 2
+    p_left = k_size - 1 - p_right
+    x = tf.keras.backend.temporal_padding(x, (p_left, p_right))
+    xs = [x[:, i: i + seq_len] for i in range(0, k_size, rate)]
+    x = tf.concatenate(xs, 2)
+    return tf.reshape(x, (-1, seq_len, kernel_size, seq_dim))
+
+
 class Attention(Layer):
     """多头注意力机制
     """
