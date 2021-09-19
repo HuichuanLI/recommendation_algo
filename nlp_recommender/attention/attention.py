@@ -27,7 +27,7 @@ def Mask(inputs, seq_len, mode='mul'):
             return inputs - (1 - mask) * 1e12
 
 
-class Attention(OurLayer):
+class Attention(Layer):
     """多头注意力机制
     """
 
@@ -85,6 +85,62 @@ class Attention(OurLayer):
         return (input_shape[0][0], input_shape[0][1], self.out_dim)
 
 
+class AtrousSelfAttention(Layer):
+    """空洞多头自注意力机制
+    说明：每个元素只跟相对距离为rate的倍数的元素有关联。
+    """
+
+    def __init__(self, heads, size_per_head, seq_len, seq_dim, rate=1,
+                 key_size=None, mask_right=False, **kwargs):
+        super(AtrousSelfAttention, self).__init__(**kwargs)
+        self.heads = heads
+        self.size_per_head = size_per_head
+        self.out_dim = heads * size_per_head
+        self.key_size = key_size if key_size else size_per_head
+        self.rate = rate
+        self.mask_right = mask_right
+        self.seq_len = seq_len
+        self.seq_dim = seq_dim
+        self.attention = Attention(
+            self.heads,
+            self.size_per_head,
+            self.key_size,
+            self.mask_right
+        )
+
+    def call(self, inputs):
+        if isinstance(inputs, list):
+            x, x_mask = inputs
+        else:
+            x, x_mask = inputs, None
+
+        pad_len = self.rate - self.seq_len % self.rate
+        x = tf.keras.backend.temporal_padding(x, (0, pad_len))
+        if x_mask is not None:
+            x_mask = tf.keras.backend.temporal_padding(x_mask, (0, pad_len))
+
+        new_seq_len = tf.shape(x)[1]
+        # 变换shape
+        x = tf.reshape(x, (-1, new_seq_len // self.rate, self.rate, self.seq_dim))
+        x = tf.transpose(x, (0, 2, 1, 3))
+        x = tf.reshape(x, (-1, new_seq_len // self.rate, self.seq_dim))
+        if x_mask is not None:
+            x_mask = tf.reshape(x_mask, (-1, new_seq_len // self.rate, self.rate, 1))
+            x_mask = tf.transpose(x_mask, (0, 2, 1, 3))
+            x_mask = tf.reshape(x_mask, (-1, new_seq_len // self.rate, 1))
+        # 做attention
+        if x_mask is not None:
+            x = self.attention([x, x, x, x_mask, x_mask])
+        else:
+            x = self.attention([x, x, x])
+        # 恢复shape
+        x = tf.reshape(x, (-1, self.rate, new_seq_len // self.rate, self.out_dim))
+        x = tf.transpose(x, (0, 2, 1, 3))
+        x = tf.reshape(x, (-1, new_seq_len, self.out_dim))
+        x = x[:, : - pad_len]
+        return x
+
+
 from keras.preprocessing import sequence
 from keras.datasets import imdb
 import tensorflow as tf
@@ -108,7 +164,7 @@ print('x_test shape:', x_test.shape)
 S_inputs = tf.keras.Input(shape=(None,), dtype='int32')
 embeddings = tf.keras.layers.Embedding(max_features, 128)(S_inputs)
 # embeddings = SinCosPositionEmbedding(128)(embeddings) # 增加Position_Embedding能轻微提高准确率
-O_seq = Attention(8, 16)([embeddings, embeddings, embeddings])
+O_seq = AtrousSelfAttention(8, 16, maxlen, 128)(embeddings)
 O_seq = tf.keras.layers.GlobalAveragePooling1D()(O_seq)
 O_seq = tf.keras.layers.Dropout(0.5)(O_seq)
 outputs = tf.keras.layers.Dense(1, activation='sigmoid')(O_seq)
