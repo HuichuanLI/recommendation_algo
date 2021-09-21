@@ -37,8 +37,6 @@ class MultiHead(keras.layers.Layer):
         self.attention = None
 
     def call(self, q, k, v, mask, training):
-        print(self.n_head)
-        print(self.head_dim)
         _q = self.wq(q)  # [n, q_step, h*h_dim]
         _k, _v = self.wk(k), self.wv(v)  # [n, step, h*h_dim]
         _q = self.split_heads(_q)  # [n, h, q_step, h_dim]
