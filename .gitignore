@@ -10,3 +10,7 @@ nlp_recommender/.idea/
 nlp_recommender/elmo/__pycache__/
 
 nlp_recommender/elmo/MRPC/
+
+nlp_recommender/Transformer/__pycache__/
+
+nlp_recommender/Transformer/MRPC/
