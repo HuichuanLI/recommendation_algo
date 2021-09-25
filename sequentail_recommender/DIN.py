@@ -19,7 +19,12 @@ from tensorflow.keras.models import *
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler, LabelEncoder
 
-from utils import SparseFeat, DenseFeat, VarLenSparseFeat
+from collections import namedtuple
+
+# 使用具名元组定义特征标记
+SparseFeat = namedtuple('SparseFeat', ['name', 'vocabulary_size', 'embedding_dim'])
+DenseFeat = namedtuple('DenseFeat', ['name', 'dimension'])
+VarLenSparseFeat = namedtuple('VarLenSparseFeat', ['name', 'vocabulary_size', 'embedding_dim', 'maxlen'])
 
 
 # 构建输入层
@@ -221,6 +226,7 @@ def DIN(feature_columns, behavior_feature_list, behavior_seq_feature_list):
     # 获取行为序列(movie_id序列, hist_movie_id) 对应的embedding，这里有可能有多个行为产生了行为序列，所以需要使用列表将其放在一起
     keys_embed_list = embedding_lookup(behavior_seq_feature_list, input_layer_dict, embedding_layer_dict)
 
+
     # 使用注意力机制将历史movie_id序列进行池化
     dnn_seq_input_list = []
     for i in range(len(keys_embed_list)):
@@ -238,3 +244,48 @@ def DIN(feature_columns, behavior_feature_list, behavior_seq_feature_list):
 
     model = Model(input_layers, dnn_logits)
     return model
+
+
+if __name__ == "__main__":
+    # 读取数据
+    samples_data = pd.read_csv("./data/movie_sample.txt", sep="\t", header=None)
+    print(samples_data.shape)
+    samples_data.columns = ["user_id", "gender", "age", "hist_movie_id", "hist_len", "movie_id", "movie_type_id",
+                            "label"]
+
+    # samples_data = shuffle(samples_data)
+
+    X = samples_data[["user_id", "gender", "age", "hist_movie_id", "hist_len", "movie_id", "movie_type_id"]]
+    y = samples_data["label"]
+
+    X_train = {"user_id": np.array(X["user_id"]), \
+               "gender": np.array(X["gender"]), \
+               "age": np.array(X["age"]), \
+               "hist_movie_id": np.array([[int(i) for i in l.split(',')] for l in X["hist_movie_id"]]), \
+               "hist_len": np.array(X["hist_len"]), \
+               "movie_id": np.array(X["movie_id"]), \
+               "movie_type_id": np.array(X["movie_type_id"])}
+
+    y_train = np.array(y)
+
+    feature_columns = [SparseFeat('user_id', max(samples_data["user_id"]) + 1, embedding_dim=8),
+                       SparseFeat('gender', max(samples_data["gender"]) + 1, embedding_dim=8),
+                       SparseFeat('age', max(samples_data["age"]) + 1, embedding_dim=8),
+                       SparseFeat('movie_id', max(samples_data["movie_id"]) + 1, embedding_dim=8),
+                       SparseFeat('movie_type_id', max(samples_data["movie_type_id"]) + 1, embedding_dim=8),
+                       DenseFeat('hist_len', 1)]
+
+    feature_columns += [
+        VarLenSparseFeat('hist_movie_id', vocabulary_size=max(samples_data["movie_id"]) + 1, embedding_dim=8,
+                         maxlen=50)]
+
+    # 行为特征列表，表示的是基础特征
+    behavior_feature_list = ['movie_id']
+    # 行为序列特征
+    behavior_seq_feature_list = ['hist_movie_id']
+
+    history = DIN(feature_columns, behavior_feature_list, behavior_seq_feature_list)
+
+    history.compile('adam', 'binary_crossentropy')
+
+    history.fit(X_train, y_train, batch_size=64, epochs=5, validation_split=0.2, )
