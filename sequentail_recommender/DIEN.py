@@ -20,12 +20,15 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler, LabelEncoder
 from random import sample
 
-from utils import SparseFeat, DenseFeat, VarLenSparseFeat
-
 from contrib.rnn_v2 import dynamic_rnn
 from contrib.utils import QAAttGRUCell, VecAttGRUCell
 
 tf.compat.v1.disable_eager_execution()  # 这句要加上
+tf.compat.v1.experimental.output_all_intermediates(True)
+# 使用具名元组定义特征标记
+SparseFeat = namedtuple('SparseFeat', ['name', 'vocabulary_size', 'embedding_dim'])
+DenseFeat = namedtuple('DenseFeat', ['name', 'dimension'])
+VarLenSparseFeat = namedtuple('VarLenSparseFeat', ['name', 'vocabulary_size', 'embedding_dim', 'maxlen'])
 
 
 # 构建输入层
@@ -191,7 +194,10 @@ class DynamicGRU(Layer):
         elif self.gru_type == 'AUGRU':
             self.gru_cell = VecAttGRUCell(self.num_units)
         else:
-            self.gru_cell = tf.compat.v1.nn.rnn_cell.GRUCell(self.num_units)
+            try:
+                self.gru_cell = tf.nn.rnn_cell.GRUCell(self.num_units)  # tf.keras.layers.GRUCell
+            except AttributeError:
+                self.gru_cell = tf.compat.v1.nn.rnn_cell.GRUCell(self.num_units)
 
         super(DynamicGRU, self).build(input_shape)
 

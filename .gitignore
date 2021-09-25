@@ -16,3 +16,5 @@ nlp_recommender/Transformer/__pycache__/
 nlp_recommender/Transformer/MRPC/
 
 sequentail_recommender/.idea/
+
+sequentail_recommender/contrib/__pycache__/
