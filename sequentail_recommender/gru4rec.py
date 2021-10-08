@@ -77,7 +77,6 @@ class GRU4Rec(Model):
         item_next = tf.reshape(self.item_embedding(next_item), [-1, self.embedding_size])
         logits = tf.reduce_sum(tf.multiply(gru_output, item_next), axis=1)
         output = tf.math.sigmoid(logits)
-
         return output
 
 
