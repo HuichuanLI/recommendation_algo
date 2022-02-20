@@ -1,22 +1,24 @@
 
 .DS_Store
 
-nlp_recommender/Seq2seq/__pycache__/
+model/nlp_recommender/Seq2seq/__pycache__/
 
-nlp_recommender/W2v/__pycache__/
+model/nlp_recommender/W2v/__pycache__/
 
-nlp_recommender/.idea/
+model/nlp_recommender/.idea/
 
-nlp_recommender/elmo/__pycache__/
+model/nlp_recommender/elmo/__pycache__/
 
-nlp_recommender/elmo/MRPC/
+model/nlp_recommender/elmo/MRPC/
 
-nlp_recommender/Transformer/__pycache__/
+model/nlp_recommender/Transformer/__pycache__/
 
-nlp_recommender/Transformer/MRPC/
+model/nlp_recommender/Transformer/MRPC/
 
-sequentail_recommender/.idea/
+model/sequentail_recommender/.idea/
 
-sequentail_recommender/contrib/__pycache__/
+model/sequentail_recommender/contrib/__pycache__/
 
 .idea/
+
+data/
