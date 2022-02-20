@@ -22,3 +22,5 @@ model/sequentail_recommender/contrib/__pycache__/
 .idea/
 
 data/
+
+__pycache__/
