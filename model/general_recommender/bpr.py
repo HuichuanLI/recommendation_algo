@@ -3,36 +3,61 @@
 # @Author  : Li Huichuan
 # @File    : bpr.py
 # @Software: PyCharm
-import torch
-import torch.nn as nn
+
 import tensorflow as tf
 from tensorflow.keras.layers import *
 from tensorflow.keras.models import *
 from collections import namedtuple
 import pandas as pd
 import numpy as np
+from model.abstract_model import GeneralRecommender
+from dataset import Dataset
 
 
-class BPR(GeneralRecommender):
+class BPR(tf.keras.Model):
     r"""BPR is a basic matrix factorization model that be trained in the pairwise way.
     """
-    input_type = InputType.PAIRWISE
 
-    def __init__(self, n_users, n_items, embedding_size, dataset):
-        super(BPR, self).__init__(config, dataset)
-
+    def __init__(self, config, dataset):
+        super().__init__()
         # load parameters info
-        self.embedding_size = embedding_size
-        self.n_users = n_users
-        self.n_items = n_items
+        self.embedding_size = config['embedding_size']
+
+        self.USER_ID = config['USER_ID_FIELD']
+        self.ITEM_ID = config['ITEM_ID_FIELD']
+        self.n_users = dataset.num(self.USER_ID)
+        self.n_items = dataset.num(self.ITEM_ID)
 
         # define layers and loss
         self.user_embedding = Embedding(self.n_users, self.embedding_size)
         self.item_embedding = Embedding(self.n_items, self.embedding_size)
-        self.loss = BPRLoss()
+        self.opt = tf.keras.optimizers.Adam(0.01)
 
-        # parameters initialization
-        self.apply(xavier_normal_initialization)
+    def call(self, X, training):
+        user_id = X["user_id"]
+        pos_item_id = X["item_id"]
+        neg_item_id = X["neg_item"]
+
+        user_emb = self.user_embedding(user_id)
+        pos_item_em = self.item_embedding(pos_item_id)
+        neg_item_em = self.item_embedding(neg_item_id)
+
+        pos_score = tf.matmul(user_emb, pos_item_em, transpose_b=True)
+        neg_score = tf.matmul(user_emb, neg_item_em, transpose_b=True)
+        return pos_score, neg_score
+
+    # in order to reduce the computation of full softmax
+    def loss(self, x, training=None):
+        pos_score, neg_score = self.call(x, training)
+        loss = tf.reduce_mean(-tf.math.log(tf.nn.sigmoid(pos_score - neg_score)))
+        return loss
+
+    def calculate_loss(self, X, training=True):
+        with tf.GradientTape() as tape:
+            cu_loss = self.loss(X, training=True)
+            grads = tape.gradient(cu_loss, self.trainable_variables)
+        self.opt.apply_gradients(zip(grads, self.trainable_variables))
+        return cu_loss.numpy()
 
     def get_user_embedding(self, user):
         r""" Get a batch of user embedding tensor according to input user's id.
@@ -52,37 +77,41 @@ class BPR(GeneralRecommender):
         """
         return self.item_embedding(item)
 
-    def forward(self, user, item):
-        user_e = self.get_user_embedding(user)
-        item_e = self.get_item_embedding(item)
-        return user_e, item_e
-
-    def calculate_loss(self, interaction):
-        user = interaction[self.USER_ID]
-        pos_item = interaction[self.ITEM_ID]
-        neg_item = interaction[self.NEG_ITEM_ID]
-
-        user_e, pos_e = self.forward(user, pos_item)
-        neg_e = self.get_item_embedding(neg_item)
-        pos_item_score, neg_item_score = torch.mul(user_e, pos_e).sum(dim=1), torch.mul(user_e, neg_e).sum(dim=1)
-        loss = self.loss(pos_item_score, neg_item_score)
-        return loss
-
     def predict(self, interaction):
         user = interaction[self.USER_ID]
         item = interaction[self.ITEM_ID]
-        user_e, item_e = self.forward(user, item)
-        return torch.mul(user_e, item_e).sum(dim=1)
+        user_e = self.get_user_embedding(user)
+        item_e = self.get_item_embedding(item)
+        return tf.matmul(user_e, item_e, transpose_b=True)
 
     def full_sort_predict(self, interaction):
         user = interaction[self.USER_ID]
-        user_e = self.get_user_embedding(user)
-        all_item_e = self.item_embedding.weight
-        score = torch.matmul(user_e, all_item_e.transpose(0, 1))
-        return score.view(-1)
+        pass
 
 
 if __name__ == "__main__":
-    from recbole.quick_start import run_recbole
+    # 读取数据
+    config = {'dataset': 'anime_data',
+              'USER_ID_FIELD': "user_id", "ITEM_ID_FIELD": "anime_id", "LABEL_FIELD": "rating", "TIME_FIELD": "",
+              "interaction_path": "/Users/hui/Desktop/python/recommendation_algo/data/rating.csv", "k": 10,
+              "item_path": "/Users/hui/Desktop/python/recommendation_algo/data/parsed_anime.csv", "user_path": "",
+              "embedding_size": 10}
 
-    run_recbole(model='BPR', dataset='ml-100k')
+    dataset = Dataset(config=config)
+    bpr = BPR(config, dataset=dataset)
+    # print(history.summary())
+
+    data = dataset.rating
+    pos_data = data[data.rating > 4]
+    neg_data = data[data.rating < 4]
+    merge_data = pd.merge(pos_data, neg_data, how='inner', left_on='user_id', right_on='user_id')
+
+    for t in range(10):
+        for step in range(0, len(merge_data), 1000):
+            X = {"user_id": np.array(merge_data["user_id"][step:step + 1000]), \
+                 "item_id": np.array(merge_data["anime_id_x"][step: step + 1000]), \
+                 "neg_item": np.array(merge_data["anime_id_y"][step: step + 1000])}
+
+            loss = bpr.calculate_loss(X)
+            if step % 100 == 0:
+                print("step: {} | loss: {}".format(step, loss))

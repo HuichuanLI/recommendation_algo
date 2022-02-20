@@ -34,7 +34,7 @@ class Pop(GeneralRecommender):
 
     def predict(self, interaction):
         item = interaction[self.ITEM_ID]
-        result = np.true_divide([elem for elem in [self.item_cnt[v] for v in item]], self.max_cnt)
+        result = [elem//self.max_cnt for elem in [self.item_cnt[v] for v in item]]
         return result
 
     def full_sort_predict(self, interaction):
