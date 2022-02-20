@@ -107,11 +107,11 @@ if __name__ == "__main__":
     merge_data = pd.merge(pos_data, neg_data, how='inner', left_on='user_id', right_on='user_id')
 
     for t in range(10):
-        for step in range(0, len(merge_data), 1000):
+        for step in range(0, len(merge_data), 10000):
             X = {"user_id": np.array(merge_data["user_id"][step:step + 1000]), \
                  "item_id": np.array(merge_data["anime_id_x"][step: step + 1000]), \
                  "neg_item": np.array(merge_data["anime_id_y"][step: step + 1000])}
 
             loss = bpr.calculate_loss(X)
             if step % 100 == 0:
-                print("step: {} | loss: {}".format(step, loss))
+                print("epoch:{},step: {} | loss: {}".format(t, step, loss))
