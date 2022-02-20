@@ -8,7 +8,6 @@ from tensorflow import keras
 import numpy as np
 import utils
 import tensorflow_addons as tfa
-import pickle
 
 
 class Seq2Seq(keras.Model):

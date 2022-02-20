@@ -4,11 +4,9 @@
 # @File : transformer.py
 # @Software: PyCharm
 import numpy as np
-import tensorflow as tf
 from tensorflow import keras
 
 import utils
-import time
 
 MODEL_DIM = 32
 MAX_LEN = 12
@@ -233,7 +231,6 @@ if __name__ == "__main__":
 
     m = Transformer(MODEL_DIM, maxlen, N_LAYER, N_HEAD, n_vocab=max_features, drop_rate=DROP_RATE)
     from keras.preprocessing import sequence
-    from keras.datasets import imdb
     import tensorflow as tf
 
     print('Loading data...')

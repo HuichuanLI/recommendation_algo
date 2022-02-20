@@ -110,7 +110,7 @@ if __name__ == "__main__":
     N_LAYERS = 2
     BATCH_SIZE = 16
     LEARNING_RATE = 2e-3
-    d = utils.MRPCSingle("./MRPC", rows=2000)
+    d = utils.MRPCSingle("MRPC", rows=2000)
     print(d.sample(10))
     print("num word: ", d.num_word)
     m = ELMo(d.num_word, emb_dim=UNITS, units=UNITS, n_layers=N_LAYERS, lr=LEARNING_RATE)

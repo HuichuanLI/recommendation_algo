@@ -90,7 +90,7 @@ class FPMC(Model):
 
 if __name__ == "__main__":
     # 读取数据
-    samples_data = pd.read_csv("./data/movie_sample.txt", sep="\t", header=None)
+    samples_data = pd.read_csv("data/movie_sample.txt", sep="\t", header=None)
     print(samples_data.shape)
     samples_data.columns = ["user_id", "gender", "age", "hist_movie_id", "hist_len", "movie_id", "movie_type_id",
                             "label"]

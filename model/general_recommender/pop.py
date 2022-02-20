@@ -31,7 +31,7 @@ class Pop():
 
 if __name__ == "__main__":
     # 读取数据
-    data = pd.read_csv("../data/rating.csv")
+    data = pd.read_csv("../../data/rating.csv")
 
     data = data[data["rating"] > 4]
     pop = Pop(10)
