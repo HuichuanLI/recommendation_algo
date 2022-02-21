@@ -29,6 +29,9 @@ class Dataset(object):
         if self.config['user_path']:
             self.user_deature = pd.read_csv(self.config['user_path'])
             self.merge = pd.merge(self.merge, self.user_deature, on=self.uid_field)
+        self.user_num = np.max(self.rating[self.uid_field]) + 1
+        self.item_num = np.max(self.rating[self.iid_field]) + 1
+
         return self.merge
 
     def _get_field_from_config(self):
@@ -96,6 +99,90 @@ class Dataset(object):
         """
         return np.max(self.merge[field]) + 1
 
+    def history_item_matrix(self, value_field=None):
+        """Get dense matrix describe user's history interaction records.
+        ``history_matrix[i]`` represents user ``i``'s history interacted item_id.
+        ``history_value[i]`` represents user ``i``'s history interaction records' values,
+        ``0`` if ``value_field = None``.
+        ``history_len[i]`` represents number of user ``i``'s history interaction records.
+        ``0`` is used as padding.
+        Returns:
+            tuple:
+                - History matrix (torch.Tensor): ``history_matrix`` described above.
+                - History values matrix (torch.Tensor): ``history_value`` described above.
+                - History length matrix (torch.Tensor): ``history_len`` described above.
+        """
+        return self._history_matrix(row='user', value_field=value_field)
+
+    def history_user_matrix(self, value_field=None):
+        """Get dense matrix describe item's history interaction records.
+        ``history_matrix[i]`` represents item ``i``'s history interacted item_id.
+        ``history_value[i]`` represents item ``i``'s history interaction records' values,
+        ``0`` if ``value_field = None``.
+        ``history_len[i]`` represents number of item ``i``'s history interaction records.
+        ``0`` is used as padding.
+        Returns:
+            tuple:
+                - History matrix (torch.Tensor): ``history_matrix`` described above.
+                - History values matrix (torch.Tensor): ``history_value`` described above.
+                - History length matrix (torch.Tensor): ``history_len`` described above.
+        """
+        return self._history_matrix(row='item', value_field=value_field)
+
+    def _history_matrix(self, row, value_field=None):
+        """Get dense matrix describe user/item's history interaction records.
+        ``history_matrix[i]`` represents ``i``'s history interacted item_id.
+        ``history_value[i]`` represents ``i``'s history interaction records' values.
+            ``0`` if ``value_field = None``.
+        ``history_len[i]`` represents number of ``i``'s history interaction records.
+        ``0`` is used as padding.
+        Args:
+            row (str): ``user`` or ``item``.
+            value_field (str, optional): Data of matrix, which should exist in ``self.inter_feat``.
+                Defaults to ``None``.
+        Returns:
+            tuple:
+                - History matrix (torch.Tensor): ``history_matrix`` described above.
+                - History values matrix (torch.Tensor): ``history_value`` described above.
+                - History length matrix (torch.Tensor): ``history_len`` described above.
+        """
+
+        user_ids, item_ids = self.rating[self.uid_field].to_list(), self.rating[self.iid_field].to_list()
+        if value_field is None:
+            values = np.ones(len(self.merge))
+        else:
+            if value_field not in self.rating.columns:
+                raise ValueError(f'Value_field [{value_field}] should be one of `inter_feat`\'s features.')
+            values = self.rating[value_field].to_list()
+
+        if row == 'user':
+            row_num, max_col_num = self.user_num, self.item_num
+            row_ids, col_ids = user_ids, item_ids
+        else:
+            row_num, max_col_num = self.item_num, self.user_num
+            row_ids, col_ids = item_ids, user_ids
+
+        history_len = np.zeros(row_num, dtype=np.int64)
+        for row_id in row_ids:
+            history_len[row_id] += 1
+
+        col_num = np.max(history_len)
+        if col_num > max_col_num * 0.2:
+            self.logger.warning(
+                f'Max value of {row}\'s history interaction records has reached '
+                f'{col_num / max_col_num * 100}% of the total.'
+            )
+
+        history_matrix = np.zeros((row_num, col_num), dtype=np.int64)
+        history_value = np.zeros((row_num, col_num))
+        history_len[:] = 0
+        for row_id, value, col_id in zip(row_ids, values, col_ids):
+            history_matrix[row_id, history_len[row_id]] = col_id
+            history_value[row_id, history_len[row_id]] = value
+            history_len[row_id] += 1
+
+        return history_matrix, history_value, history_len
+
 
 if __name__ == "__main__":
     config = {'dataset': 'anime_data',
@@ -105,3 +192,4 @@ if __name__ == "__main__":
               "item_path": "/Users/hui/Desktop/python/recommendation_algo/data/parsed_anime.csv", "user_path": ""}
     dataset = Dataset(config=config)
     print(dataset.merge)
+    print(dataset.history_user_matrix(value_field="rating_x"))
