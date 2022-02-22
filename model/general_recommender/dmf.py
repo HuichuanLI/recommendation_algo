@@ -69,54 +69,20 @@ class DMF(tf.keras.Model):
         user = self.get_user_embedding(user_id)
 
         # Following lines construct tensor of shape [B,n_users] using the tensor of shape [B,H]
-        col_indices = self.history_user_id[item].flatten()
-        row_indices = torch.arange(item.shape[0]).to(self.device). \
-            repeat_interleave(self.history_user_id.shape[1], dim=0)
-        matrix_01 = torch.zeros(1).to(self.device).repeat(item.shape[0], self.n_users)
-        matrix_01.index_put_((row_indices, col_indices), self.history_user_value[item].flatten())
+        col_indices = self.history_user_id[user_id]
+        row_indices = np.repeat(np.arange(item_id.shape[0]), self.history_user_id.shape[1], axis=0)
+        matrix_01 = np.repeat(np.zeros(1), [len(item_id), self.n_users])
+        np.put(matrix_01, [row_indices, col_indices], self.history_user_value[item_id])
         item = self.item_linear(matrix_01)
 
         user = self.user_fc_layers(user)
         item = self.item_fc_layers(item)
 
         # cosine distance is replaced by dot product according the result of our experiments.
-        vector = torch.mul(user, item).sum(dim=1)
-        vector = self.sigmoid(vector)
+        vector = tf.math.reduce_sum(tf.multiply(user, item), axis=1)
+        vector = tf.math.sigmoid(vector)
+        return vector
 
-    def get_user_embedding(self, user):
-        r"""Get a batch of user's embedding with the user's id and history interaction matrix.
-        Args:
-            user (torch.LongTensor): The input tensor that contains user's id, shape: [batch_size, ]
-        Returns:
-            torch.FloatTensor: The embedding tensor of a batch of user, shape: [batch_size, embedding_size]
-        """
-        # Following lines construct tensor of shape [B,n_items] using the tensor of shape [B,H]
-        col_indices = self.history_item_id[user].flatten()
-        row_indices = torch.arange(user.shape[0]).to(self.device)
-        row_indices = row_indices.repeat_interleave(self.history_item_id.shape[1], dim=0)
-        matrix_01 = torch.zeros(1).to(self.device).repeat(user.shape[0], self.n_items)
-        matrix_01.index_put_((row_indices, col_indices), self.history_item_value[user].flatten())
-        user = self.user_linear(matrix_01)
-
-        return user
-
-    def get_item_embedding(self):
-        r"""Get all item's embedding with history interaction matrix.
-        Considering the RAM of device, we use matrix multiply on sparse tensor for generalization.
-        Returns:
-            torch.FloatTensor: The embedding tensor of all item, shape: [n_items, embedding_size]
-        """
-        interaction_matrix = self.interaction_matrix.tocoo()
-        row = interaction_matrix.row
-        col = interaction_matrix.col
-        i = torch.LongTensor([row, col])
-        data = torch.FloatTensor(interaction_matrix.data)
-        item_matrix = torch.sparse.FloatTensor(i, data, torch.Size(interaction_matrix.shape)).to(self.device). \
-            transpose(0, 1)
-        item = torch.sparse.mm(item_matrix, self.item_linear.weight.t())
-
-        item = self.item_fc_layers(item)
-        return item
 
     def predict(self, interaction):
         user = interaction[self.USER_ID]
@@ -138,7 +104,7 @@ if __name__ == "__main__":
               "mf_train": True, "mlp_train": True, "dropout_prob": 0.8}
 
     dataset = Dataset(config=config)
-    neuMF = NeuMF(config, dataset=dataset)
+    neuMF = DMF(config, dataset=dataset)
     # print(history.summary())
 
     neuMF.compile(optimizer=tf.keras.optimizers.RMSprop(0.001),

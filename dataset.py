@@ -192,4 +192,4 @@ if __name__ == "__main__":
               "item_path": "/Users/hui/Desktop/python/recommendation_algo/data/parsed_anime.csv", "user_path": ""}
     dataset = Dataset(config=config)
     print(dataset.merge)
-    print(dataset.history_user_matrix(value_field="rating_x"))
+    history_user_id, history_user_value, _ = dataset.history_user_matrix(value_field="rating")
