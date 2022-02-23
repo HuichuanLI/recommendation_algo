@@ -40,16 +40,17 @@ class DMF(tf.keras.Model):
         self.item_embedding_size = config['item_embedding_size']
         self.user_hidden_size_list = config['user_hidden_size_list']
         self.item_hidden_size_list = config['item_hidden_size_list']
+        self.RATING = config['LABEL_FIELD']
+
         # The dimensions of the last layer of users and items must be the same
-        assert self.user_hidden_size_list[-1] == self.item_hidden_size_list[-1]
-        self.inter_matrix_type = config['inter_matrix_type']
+        assert self.user_hidden_size_list == self.item_hidden_size_list
         self.USER_ID = config['USER_ID_FIELD']
         self.ITEM_ID = config['ITEM_ID_FIELD']
         self.n_users = np.max(dataset.rating[self.USER_ID]) + 1
         self.n_items = np.max(dataset.rating[self.ITEM_ID]) + 1
 
-        self.user_linear = tf.keras.layers.Dense(self.user_embedding_size, bias=False)
-        self.item_linear = tf.keras.layers.Dense(self.user_embedding_size, bias=False)
+        self.user_linear = tf.keras.layers.Dense(self.user_embedding_size)
+        self.item_linear = tf.keras.layers.Dense(self.user_embedding_size)
 
         self.user_fc_layers = tf.keras.layers.Dense(self.user_hidden_size_list)
         self.item_fc_layers = tf.keras.layers.Dense(self.item_hidden_size_list)
@@ -61,6 +62,43 @@ class DMF(tf.keras.Model):
         self.history_item_id, self.history_item_value, _ = dataset.history_item_matrix(value_field=self.RATING)
         self.interaction_matrix = dataset.inter_matrix(form='csr', value_field=self.RATING).astype(np.float32)
         self.max_rating = self.history_user_value.max()
+        self.bce = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+
+    def get_user_embedding(self, user):
+        r"""Get a batch of user's embedding with the user's id and history interaction matrix.
+        Args:
+            user (torch.LongTensor): The input tensor that contains user's id, shape: [batch_size, ]
+        Returns:
+            torch.FloatTensor: The embedding tensor of a batch of user, shape: [batch_size, embedding_size]
+        """
+        # Following lines construct tensor of shape [B,n_items] using the tensor of shape [B,H]
+        print(user)
+        print(self.history_item_id[user])
+        col_indices = self.history_item_id[user].flatten()
+        row_indices = np.arange(user.shape[0])
+        row_indices = np.repeat(row_indices, self.history_item_id.shape[1], axis=0)
+        matrix_01 = np.repeat(np.zeros(1), [user.shape[0], self.n_items])
+        np.put(matrix_01, [row_indices, col_indices], self.history_item_value[user].flatten())
+        user = self.user_fc_layers(matrix_01)
+
+        return user
+
+    def get_item_embedding(self):
+        r"""Get all item's embedding with history interaction matrix.
+        Considering the RAM of device, we use matrix multiply on sparse tensor for generalization.
+        Returns:
+            torch.FloatTensor: The embedding tensor of all item, shape: [n_items, embedding_size]
+        """
+        interaction_matrix = self.interaction_matrix.tocoo()
+        row = interaction_matrix.row
+        col = interaction_matrix.col
+        i = np.array([row, col])
+        data = np.array(interaction_matrix.data)
+        # item_matrix = torch.sparse.FloatTensor(i, data, torch.Size(interaction_matrix.shape)).to(self.device). \
+        #     transpose(0, 1)
+        item_matrix = data[i]
+        item = self.item_fc_layers(item_matrix)
+        return item
 
     def call(self, X, training):
         user_id = X[:, 0]
@@ -83,7 +121,6 @@ class DMF(tf.keras.Model):
         vector = tf.math.sigmoid(vector)
         return vector
 
-
     def predict(self, interaction):
         user = interaction[self.USER_ID]
         item = interaction[self.ITEM_ID]
@@ -93,6 +130,19 @@ class DMF(tf.keras.Model):
         user = interaction[self.USER_ID]
         pass
 
+    def calculate_loss(self, X, training=True):
+        with tf.GradientTape() as tape:
+            user = X["user_id"]
+            item = X["item_id"]
+            label = X["label"]
+            output = self.call(user, item)
+
+            label = label / self.max_rating  # normalize the label to calculate BCE loss.
+            cur_loss = self.bce(output, label)
+            grads = tape.gradient(cur_loss, self.trainable_variables)
+        self.opt.apply_gradients(zip(grads, self.trainable_variables))
+        return cur_loss.numpy()
+
 
 if __name__ == "__main__":
     # 读取数据
@@ -100,16 +150,12 @@ if __name__ == "__main__":
               'USER_ID_FIELD': "user_id", "ITEM_ID_FIELD": "anime_id", "LABEL_FIELD": "rating", "TIME_FIELD": "",
               "interaction_path": "/Users/hui/Desktop/python/recommendation_algo/data/rating.csv", "k": 10,
               "item_path": "/Users/hui/Desktop/python/recommendation_algo/data/parsed_anime.csv", "user_path": "",
-              "mf_embedding_size": 10, 'mlp_embedding_size': 10, 'mlp_hidden_size': 32, 'use_pretrain': False,
-              "mf_train": True, "mlp_train": True, "dropout_prob": 0.8}
+              "user_hidden_size_list": 10, 'item_hidden_size_list': 10, "dropout_prob": 0.8, "user_embedding_size": 10,
+              "item_embedding_size": 10, }
 
     dataset = Dataset(config=config)
-    neuMF = DMF(config, dataset=dataset)
+    dmf = DMF(config, dataset=dataset)
     # print(history.summary())
-
-    neuMF.compile(optimizer=tf.keras.optimizers.RMSprop(0.001),
-                  loss=tf.keras.losses.BinaryCrossentropy(),
-                  metrics=['accuracy'])
 
     data = dataset.rating
     data["label"] = 0
@@ -118,4 +164,12 @@ if __name__ == "__main__":
     print(data)
     data = data.to_numpy()
     print(data)
-    neuMF.fit(data[:, :2], data[:, 3], batch_size=1000, epochs=5)
+    for t in range(10):
+        for step in range(0, len(data), 10000):
+            X = {"user_id": np.array(data[step:step + 1000,0]), \
+                 "item_id": np.array(data[step: step + 1000,1]), \
+                 "label": np.array(data[step: step + 1000,2])}
+
+            loss = dmf.calculate_loss(X)
+            if step % 100 == 0:
+                print("epoch:{},step: {} | loss: {}".format(t, step, loss))

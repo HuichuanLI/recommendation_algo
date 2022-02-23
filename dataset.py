@@ -53,7 +53,7 @@ class Dataset(object):
     def inter_matrix(self, form='coo', value_field=None):
         if not self.uid_field or not self.iid_field:
             raise ValueError('dataset does not exist uid/iid, thus can not converted to sparse matrix.')
-        return self._create_sparse_matrix(self.merge, self.uid_field, self.iid_field, form, value_field)
+        return self._create_sparse_matrix(self.rating, self.uid_field, self.iid_field, form, value_field)
 
     def _create_sparse_matrix(self, df_feat, source_field, target_field, form='coo', value_field=None):
         """Get sparse matrix that describe relations between two fields.
