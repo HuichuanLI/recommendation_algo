@@ -1,13 +1,3 @@
-# -*- coding:utf-8 -*-
-# @Time : 2022/2/24 11:16 下午
-# @Author : huichuan LI
-# @File : nais.py
-# @Software: PyCharm
-# -*- coding:utf-8 -*-
-# @Time : 2022/2/20 8:59 下午
-# @Author : huichuan LI
-# @File : neumf.py
-# @Software: PyCharm
 # -*- coding: utf-8 -*-
 # @Time    : 2021/10/8 14:31
 # @Author  : Li Huichuan
@@ -76,16 +66,23 @@ class NAIS(tf.keras.Model):
     def call(self, X, training):
         """forward the model by interaction
         """
-        user_inter = X[:, :-4]
-        item = X[:, -3]
-        item_num = X[:, -4]
+        user_inter = Input(shape=(10228,), name="user_inter")
+        item = Input(shape=(1,), name="item")
+        item_num = Input(shape=(1,), name="item_num")
+        user_inter = X["user_inter"]
+        item = X["item"]
+        item_num = X["item_num"]
+        print(user_inter.shape)
+        print(item.shape)
+        print(item_num.shape)
+        print("input")
         user_history = self.item_src_embedding(user_inter)  # batch_size x max_len x embedding_size
         print(user_history)
         target = self.item_dst_embedding(item)  # batch_size x embedding_size
         print(target)
-        similarity = tf.reduce_sum(tf.linalg.matmul(user_history, target), axis=2)  # batch_size x max_len
+        similarity = tf.reduce_sum(tf.math.multiply(user_history, target), axis=2)  # batch_size x max_len
         print(similarity)
-        target = tf.expand_dims(target, axis=1)
+
         if self.algorithm == 'prod':
             mlp_input = tf.math.multiply(user_history, target)  # batch_size x max_len x embedding_size
         else:
@@ -115,8 +112,8 @@ class NAIS(tf.keras.Model):
         exp_sum = tf.math.reduce_sum(exp_logits, axis=1, keepdims=True)
         exp_sum = tf.math.pow(exp_sum, self.beta)
         weights = tf.math.divide(exp_logits, exp_sum)
-        coeff = tf.cast(tf.math.pow(item_num, -self.alpha), tf.float32)
-        output = tf.math.sigmoid(tf.multiply(coeff, tf.math.reduce_sum(weights * similarity, axis=1)))
+        coeff = tf.squeeze(tf.cast(tf.math.pow(item_num, -self.alpha), tf.float32), axis=1)
+        output = tf.math.sigmoid(coeff * tf.math.reduce_sum(weights * similarity, axis=1))
         return output
 
 
@@ -126,7 +123,7 @@ if __name__ == "__main__":
               'USER_ID_FIELD': "user_id", "ITEM_ID_FIELD": "anime_id", "LABEL_FIELD": "rating", "TIME_FIELD": "",
               "interaction_path": "/Users/hui/Desktop/python/recommendation_algo/data/rating.csv",
               "item_path": "/Users/hui/Desktop/python/recommendation_algo/data/parsed_anime.csv", "user_path": "",
-              "embedding_size": 10, 'weight_size': 64, 'algorithm': "concat", 'beta': 0.5,
+              "embedding_size": 16, 'weight_size': 64, 'algorithm': "prod", 'beta': 0.5,
               "alpha": 0, "reg_weights": [0, 0, 0], "dropout_prob": 0.8}
 
     dataset = Dataset(config=config)
@@ -150,17 +147,14 @@ if __name__ == "__main__":
     # print(data) g b
     data.label[data.rating > 4] = 1
     # print(data)
-    data = data.iloc[:100000, :]
+    data = data.iloc[:10000, :]
     data = data.to_numpy()
-    data = np.column_stack((history_item_matrix[data[:, 0]], data))
-    data = np.column_stack((history_lens[data[:, 0]], data))
+    # data = np.column_stack((history_item_matrix[data[:, 0]], data))
+    # data = np.column_stack((history_lens[data[:, 0]], data))
+    print(data[:, -1])
 
-    # print(data.shape)
-    # user_inter = history_item_matrix[data[:10, 0]]
-    # item_num = history_lens[data[:10, 0]]
-    # print(user_inter.shape)
-    # print(item_num)
-    # # batch_mask_mat = mask_mat[data[:,0]]
-    #
+    X_train = {"user_inter": np.array(history_item_matrix[data[:, 0]]), \
+               "item": np.array(data[:, 1]), \
+               "item_num": np.array(history_lens[data[:, 0]])}
 
-    neuMF.fit(data, data[:, -1], batch_size=2048, epochs=5)
+    neuMF.fit(X_train, data[:, -1], batch_size=2048, epochs=5)

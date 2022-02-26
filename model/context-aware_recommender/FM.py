@@ -99,7 +99,7 @@ def FM(feature_columns):
     dnn_dense_input = []
     for fc in dense_feature_columns:
         dnn_dense_input.append(input_layer_dict[fc.name])
-
+    print(dnn_dense_input)
     # 将所有的dense特征拼接
     dnn_dense_input = Concatenate(axis=1)(dnn_dense_input)
     dense_liner = Dense(1)
@@ -109,6 +109,7 @@ def FM(feature_columns):
     dnn_sparse_embed_input = concat_embedding_list(sparse_feature_columns, input_layer_dict, embedding_layer_dict,
                                                    flatten=True)
     emb_input = Concatenate(axis=1)(dnn_sparse_embed_input)
+    print(dnn_sparse_embed_input)
     emb_input_fm = tf.reshape(emb_input, shape=[-1, 5, 8])
     fm = BaseFactorizationMachine()
     output = tf.reduce_sum(tf.math.sigmoid(fm(emb_input_fm) + dense_liner(emb_input)), axis=1)
