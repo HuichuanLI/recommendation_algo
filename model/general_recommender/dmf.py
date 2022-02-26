@@ -50,7 +50,7 @@ class DMF(tf.keras.Model):
         self.n_items = np.max(dataset.rating[self.ITEM_ID]) + 1
 
         self.user_linear = tf.keras.layers.Dense(self.user_embedding_size)
-        self.item_linear = tf.keras.layers.Dense(self.user_embedding_size)
+        self.item_linear = tf.keras.layers.Dense(self.item_embedding_size)
 
         self.user_fc_layers = tf.keras.layers.Dense(self.user_hidden_size_list)
         self.item_fc_layers = tf.keras.layers.Dense(self.item_hidden_size_list)
@@ -63,6 +63,7 @@ class DMF(tf.keras.Model):
         self.interaction_matrix = dataset.inter_matrix(form='csr', value_field=self.RATING).astype(np.float32)
         self.max_rating = self.history_user_value.max()
         self.bce = tf.keras.losses.BinaryCrossentropy(from_logits=True)
+        self.opt = tf.keras.optimizers.Adam(0.01)
 
     def get_user_embedding(self, user):
         r"""Get a batch of user's embedding with the user's id and history interaction matrix.
@@ -72,14 +73,13 @@ class DMF(tf.keras.Model):
             torch.FloatTensor: The embedding tensor of a batch of user, shape: [batch_size, embedding_size]
         """
         # Following lines construct tensor of shape [B,n_items] using the tensor of shape [B,H]
-        print(user)
-        print(self.history_item_id[user])
-        col_indices = self.history_item_id[user].flatten()
-        row_indices = np.arange(user.shape[0])
-        row_indices = np.repeat(row_indices, self.history_item_id.shape[1], axis=0)
-        matrix_01 = np.repeat(np.zeros(1), [user.shape[0], self.n_items])
-        np.put(matrix_01, [row_indices, col_indices], self.history_item_value[user].flatten())
-        user = self.user_fc_layers(matrix_01)
+        # col_indices = self.history_item_id[user].flatten()
+        # row_indices = np.arange(len(user))
+        # row_indices = np.repeat(row_indices, self.history_item_id.shape[1], axis=0)
+        # matrix_01 = np.repeat(np.zeros(1), [len(user), self.n_items])
+        # np.put(matrix_01, [row_indices, col_indices], self.history_item_value[user].flatten())
+        matrix_01 = self.history_item_value[user]
+        user = self.user_linear(matrix_01)
 
         return user
 
@@ -100,19 +100,17 @@ class DMF(tf.keras.Model):
         item = self.item_fc_layers(item_matrix)
         return item
 
-    def call(self, X, training):
-        user_id = X[:, 0]
-        item_id = X[:, 1]
+    def call(self, user_id, item_id):
 
         user = self.get_user_embedding(user_id)
 
         # Following lines construct tensor of shape [B,n_users] using the tensor of shape [B,H]
-        col_indices = self.history_user_id[user_id]
-        row_indices = np.repeat(np.arange(item_id.shape[0]), self.history_user_id.shape[1], axis=0)
-        matrix_01 = np.repeat(np.zeros(1), [len(item_id), self.n_users])
-        np.put(matrix_01, [row_indices, col_indices], self.history_user_value[item_id])
+        # col_indices = self.history_user_id[user_id]
+        # row_indices = np.repeat(np.arange(item_id.shape[0]), self.history_user_id.shape[1], axis=0)
+        # matrix_01 = np.zeros ([len(item_id), self.n_users])
+        # np.put(matrix_01, [row_indices, col_indices], self.history_user_value[item_id])
+        matrix_01 = self.history_user_value[item_id]
         item = self.item_linear(matrix_01)
-
         user = self.user_fc_layers(user)
         item = self.item_fc_layers(item)
 
@@ -150,7 +148,7 @@ if __name__ == "__main__":
               'USER_ID_FIELD': "user_id", "ITEM_ID_FIELD": "anime_id", "LABEL_FIELD": "rating", "TIME_FIELD": "",
               "interaction_path": "/Users/hui/Desktop/python/recommendation_algo/data/rating.csv", "k": 10,
               "item_path": "/Users/hui/Desktop/python/recommendation_algo/data/parsed_anime.csv", "user_path": "",
-              "user_hidden_size_list": 10, 'item_hidden_size_list': 10, "dropout_prob": 0.8, "user_embedding_size": 10,
+              "user_hidden_size_list": 100, 'item_hidden_size_list': 100, "dropout_prob": 0.8, "user_embedding_size": 10,
               "item_embedding_size": 10, }
 
     dataset = Dataset(config=config)
