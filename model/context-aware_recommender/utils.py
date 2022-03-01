@@ -103,3 +103,48 @@ class DNN(Layer):
                   'output_activation': self.output_activation, 'seed': self.seed}
         base_config = super(DNN, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+
+def build_input_layers(feature_columns):
+    input_layer_dict = {}
+
+    for fc in feature_columns:
+        if isinstance(fc, SparseFeat):
+            input_layer_dict[fc.name] = Input(shape=(1,), name=fc.name)
+        elif isinstance(fc, DenseFeat):
+            input_layer_dict[fc.name] = Input(shape=(fc.dimension,), name=fc.name)
+        elif isinstance(fc, VarLenSparseFeat):
+            input_layer_dict[fc.name] = Input(shape=(fc.maxlen,), name=fc.name)
+
+    return input_layer_dict
+
+
+# 将所有的sparse特征embedding拼接
+def concat_embedding_list(feature_columns, input_layer_dict, embedding_layer_dict, flatten=False):
+    embedding_list = []
+    for fc in feature_columns:
+        _input = input_layer_dict[fc.name]  # 获取输入层
+        _embed = embedding_layer_dict[fc.name]  # B x 1 x dim  获取对应的embedding层
+        embed = _embed(_input)  # B x dim  将input层输入到embedding层中
+
+        # 是否需要flatten, 如果embedding列表最终是直接输入到Dense层中，需要进行Flatten，否则不需要
+        if flatten:
+            embed = Flatten()(embed)
+
+        embedding_list.append(embed)
+
+    return embedding_list
+
+
+# 构建embedding层
+def build_embedding_layers(feature_columns, input_layer_dict):
+    embedding_layer_dict = {}
+
+    for fc in feature_columns:
+        if isinstance(fc, SparseFeat):
+            embedding_layer_dict[fc.name] = Embedding(fc.vocabulary_size, fc.embedding_dim, name='emb_' + fc.name)
+        elif isinstance(fc, VarLenSparseFeat):
+            embedding_layer_dict[fc.name] = Embedding(fc.vocabulary_size + 1, fc.embedding_dim, name='emb_' + fc.name,
+                                                      mask_zero=True)
+
+    return embedding_layer_dict

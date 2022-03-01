@@ -1,12 +1,8 @@
 # -*- coding:utf-8 -*-
-# @Time : 2022/2/28 11:18 下午
+# @Time : 2022/3/2 12:00 上午
 # @Author : huichuan LI
-# @File : widedeep.py
+# @File : fnn.py
 # @Software: PyCharm
-"""
-Reference:
-    [1] Cheng H T, Koc L, Harmsen J, et al. Wide & deep learning for recommender systems[C]//Proceedings of the 1st Workshop on Deep Learning for Recommender Systems. ACM, 2016: 7-10.(https://arxiv.org/pdf/1606.07792.pdf)
-"""
 # -*- coding:utf-8 -*-
 # @Time : 2022/2/28 11:19 下午
 # @Author : huichuan LI
@@ -78,33 +74,10 @@ def build_embedding_layers(feature_columns, input_layer_dict):
     return embedding_layer_dict
 
 
-class BaseFactorizationMachine(Layer):
-    r"""Calculate FM result over the embeddings
-    Args:
-        reduce_sum: bool, whether to sum the result, default is True.
-    Input:
-        input_x: tensor, A 3D tensor with shape:``(batch_size,field_size,embed_dim)``.
-    Output
-        output: tensor, A 3D tensor with shape: ``(batch_size,1)`` or ``(batch_size, embed_dim)``.
-    """
 
-    def __init__(self, reduce_sum=True):
-        super(BaseFactorizationMachine, self).__init__()
-        self.reduce_sum = reduce_sum
-
-    def call(self, input_x):
-        square_of_sum = tf.reduce_sum(input_x, axis=1) ** 2
-        sum_of_square = tf.reduce_sum(input_x ** 2, axis=1)
-        output = square_of_sum - sum_of_square
-        if self.reduce_sum:
-            output = tf.reduce_sum(output, axis=1, keepdims=True)
-        output = 0.5 * output
-        return output
-
-
-def WDL(feature_columns, dnn_hidden_units=(256, 128, 64),
-        l2_reg_linear=0.00001, l2_reg_embedding=0.00001, l2_reg_dnn=0, seed=1024, dnn_dropout=0,
-        dnn_activation='relu', dnn_use_bn=False, task='binary'):
+def FNN(feature_columns, dnn_hidden_units=(256, 128, 64),
+           l2_reg_linear=0.00001, l2_reg_embedding=0.00001, l2_reg_dnn=0, seed=1024, dnn_dropout=0,
+           dnn_activation='relu', dnn_use_bn=False, task='binary'):
     input_layer_dict = build_input_layers(feature_columns)
 
     input_layers = list(input_layer_dict.values())
@@ -136,7 +109,7 @@ def WDL(feature_columns, dnn_hidden_units=(256, 128, 64),
     dnn_logit = tf.keras.layers.Dense(
         1, use_bias=False, kernel_initializer=tf.keras.initializers.glorot_normal(seed=seed))(dnn_output)
 
-    output = tf.reduce_sum(dense_liner(input) + dnn_logit, axis=1)
+    output = tf.reduce_sum(tf.math.sigmoid(dense_liner(emb_input) + dnn_logit), axis=1)
 
     model = Model(input_layers, output)
     return model
@@ -175,12 +148,12 @@ if __name__ == "__main__":
     n_users = max(samples_data["user_id"]) + 1
     n_item = max(samples_data["movie_id"]) + 1
 
-    wdl = WDL(feature_columns)
+    fm = FNN(feature_columns)
     #
-    wdl.compile('adam',
-                loss=tf.keras.losses.BinaryCrossentropy(),
-                metrics=[tf.keras.metrics.BinaryAccuracy(),
-                         tf.keras.metrics.AUC()])
-    wdl.fit(X_train, y_train, batch_size=64, epochs=10, validation_split=0.2, )
+    fm.compile('adam',
+               loss=tf.keras.losses.BinaryCrossentropy(),
+               metrics=[tf.keras.metrics.BinaryAccuracy(),
+                        tf.keras.metrics.AUC()])
+    fm.fit(X_train, y_train, batch_size=64, epochs=10, validation_split=0.2, )
     #
-    print(wdl.summary())
+    print(fm.summary())
