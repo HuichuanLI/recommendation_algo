@@ -62,31 +62,7 @@ def build_embedding_layers(feature_columns, input_layer_dict):
     return embedding_layer_dict
 
 
-class BaseFactorizationMachine(Layer):
-    r"""Calculate FM result over the embeddings
-    Args:
-        reduce_sum: bool, whether to sum the result, default is True.
-    Input:
-        input_x: tensor, A 3D tensor with shape:``(batch_size,field_size,embed_dim)``.
-    Output
-        output: tensor, A 3D tensor with shape: ``(batch_size,1)`` or ``(batch_size, embed_dim)``.
-    """
-
-    def __init__(self, reduce_sum=True):
-        super(BaseFactorizationMachine, self).__init__()
-        self.reduce_sum = reduce_sum
-
-    def call(self, input_x):
-        square_of_sum = tf.reduce_sum(input_x, axis=1) ** 2
-        sum_of_square = tf.reduce_sum(input_x ** 2, axis=1)
-        output = square_of_sum - sum_of_square
-        if self.reduce_sum:
-            output = tf.reduce_sum(output, axis=1, keepdims=True)
-        output = 0.5 * output
-        return output
-
-
-def FM(feature_columns):
+def LR(feature_columns):
     input_layer_dict = build_input_layers(feature_columns)
 
     input_layers = list(input_layer_dict.values())
@@ -102,17 +78,15 @@ def FM(feature_columns):
     print(dnn_dense_input)
     # 将所有的dense特征拼接
     dnn_dense_input = Concatenate(axis=1)(dnn_dense_input)
-    dense_liner = Dense(1)
     # 构建embedding字典
     embedding_layer_dict = build_embedding_layers(feature_columns, input_layer_dict)
 
     dnn_sparse_embed_input = concat_embedding_list(sparse_feature_columns, input_layer_dict, embedding_layer_dict,
                                                    flatten=True)
     emb_input = Concatenate(axis=1)(dnn_sparse_embed_input)
-    print(dnn_sparse_embed_input)
-    emb_input_fm = tf.reshape(emb_input, shape=[-1, 5, 8])
-    fm = BaseFactorizationMachine()
-    output = tf.reduce_sum(tf.math.sigmoid(fm(emb_input_fm) + dense_liner(emb_input)), axis=1)
+
+    input = Concatenate(axis=1)([emb_input, dnn_dense_input])
+    output = tf.math.sigmoid(tf.keras.layers.Dense(1)(input))
     model = Model(input_layers, output)
     return model
 
@@ -150,12 +124,12 @@ if __name__ == "__main__":
     n_users = max(samples_data["user_id"]) + 1
     n_item = max(samples_data["movie_id"]) + 1
 
-    fm = FM(feature_columns)
+    lr = LR(feature_columns)
     #
-    fm.compile('adam',
+    lr.compile('adam',
                loss=tf.keras.losses.BinaryCrossentropy(),
                metrics=[tf.keras.metrics.BinaryAccuracy(),
                         tf.keras.metrics.AUC()])
-    fm.fit(X_train, y_train, batch_size=64, epochs=10, validation_split=0.2, )
+    lr.fit(X_train, y_train, batch_size=64, epochs=10, validation_split=0.2, )
     #
-    print(fm.summary())
+    print(lr.summary())

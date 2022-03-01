@@ -18,6 +18,16 @@ from model.abstract_model import GeneralRecommender
 from dataset import Dataset
 
 
+class Sampling(Layer):
+    def call(self, z_mean, z_log_var):
+        batch = tf.shape(z_log_var)[0]
+        dim = tf.shape(z_log_var)[1]
+        std = tf.math.exp(0.5 * z_log_var)
+
+        epsilon = tf.keras.backend.random_normal(shape=(batch, dim), mean=0, stddev=0.01)
+        return z_mean + epsilon * std
+
+
 class MultiVAE(tf.keras.Model):
     r"""MultiVAE is an item-based collaborative filtering model that simultaneously ranks all items for each user.
     We implement the MultiVAE model with only user dataloader.
@@ -26,7 +36,7 @@ class MultiVAE(tf.keras.Model):
     def __init__(self, config, dataset):
         super().__init__()
         # load parameters info
-
+        self.update = 0
         self.USER_ID = config['USER_ID_FIELD']
         self.ITEM_ID = config['ITEM_ID_FIELD']
         self.n_users = np.max(dataset.rating[self.USER_ID]) + 1
@@ -43,10 +53,12 @@ class MultiVAE(tf.keras.Model):
         self.total_anneal_steps = config["total_anneal_steps"]
 
         self.encode_layer_dims = self.hidden_size
-        self.decode_layer_dims = self.hidden_size[::-1]
+        self.decode_layer_dims = self.hidden_size[::-1] + [10227]
 
         self.encoder = self.mlp_layers(self.encode_layer_dims)
         self.decoder = self.mlp_layers(self.decode_layer_dims)
+        self.reparameterize = Sampling()
+        self.opt = tf.keras.optimizers.Adam(0.01)
 
         # define layers and loss
         # construct source and destination item embedding matrix
@@ -54,13 +66,13 @@ class MultiVAE(tf.keras.Model):
     def mlp_layers(self, layer_dims):
         mlp_modules = []
         for i in layer_dims:
-            mlp_modules.append(tf.keras.layers.Dense(i))
+            mlp_modules.append(tf.keras.layers.Dense(i, activation="relu"))
         return mlp_modules
 
-    def reparameterize(self, mu, logvar):
-        if self.training:
+    def reparameterize(self, mu, logvar, training):
+        if training:
             std = tf.math.exp(0.5 * logvar)
-            epsilon = tf.math.zeros_like(std).normal_(mean=0, std=0.01)
+            epsilon = tf.random.normal(std.shape, mean=0, stddev=0.01)
             return mu + epsilon * std
         else:
             return mu
@@ -77,22 +89,33 @@ class MultiVAE(tf.keras.Model):
                 anneal = self.anneal_cap
 
             z, mu, logvar = self.call(rating_matrix)
-
+            # print("z")
+            # print(z)
+            # print("mi")
+            # print(mu)
+            # print("logvar")
+            # print(logvar)
+            # print(tf.math.reduce_sum(1 + logvar - tf.math.pow(mu, 2) - tf.math.exp(logvar), axis=1))
             # KL loss
             kl_loss = -0.5 * tf.math.reduce_mean(
-                tf.math.reduce_sum(1 + logvar - mu.pow(2) - logvar.exp(), axis=1)) * anneal
-
+                tf.math.reduce_sum(1 + logvar - tf.math.pow(mu, 2) - tf.math.exp(logvar), axis=1)) * anneal
+            # print("kl_loss")
+            # print(kl_loss)
             # CE loss
-            ce_loss = tf.reduce_sum(-(tf.nn.log_softmax(z, 1) * rating_matrix), axis=1)
+            # print(-(tf.nn.log_softmax(z, 1)))
+            ce_loss = tf.math.reduce_mean(tf.reduce_sum(-(tf.nn.log_softmax(z, 1) * rating_matrix), axis=1))
+            # print("ce_loss")
+            # print(ce_loss)
             cur_loss = ce_loss + kl_loss
 
             grads = tape.gradient(cur_loss, self.trainable_variables)
         self.opt.apply_gradients(zip(grads, self.trainable_variables))
         return cur_loss.numpy()
 
-    def call(self, rating_matrixs):
-        rating_matrixs = Input(shape=(10228,), name="user_inter")
-        h = tf.keras.layers.Normalization(axis=1)(rating_matrixs )
+    def call(self, X):
+        # rating_matrixs = Input(shape=(10228,), name="user_inter")
+        rating_matrixs = X
+        h = tf.clip_by_value(tf.keras.layers.Normalization(axis=1)(rating_matrixs), 1e-10, 1.0)
 
         h = self.drop_out_layers(h)
 
@@ -101,9 +124,8 @@ class MultiVAE(tf.keras.Model):
 
         mu = h[:, :int(self.lat_dim / 2)]
         logvar = h[:, int(self.lat_dim / 2):]
-
         z = self.reparameterize(mu, logvar)
-        for elem in self.encoder:
+        for elem in self.decoder:
             z = elem(z)
 
         return z, mu, logvar
@@ -130,42 +152,17 @@ if __name__ == "__main__":
               'USER_ID_FIELD': "user_id", "ITEM_ID_FIELD": "anime_id", "LABEL_FIELD": "rating", "TIME_FIELD": "",
               "interaction_path": "/Users/hui/Desktop/python/recommendation_algo/data/rating.csv", "k": 10,
               "item_path": "/Users/hui/Desktop/python/recommendation_algo/data/parsed_anime.csv", "user_path": "",
-              "mlp_hidden_size": [600], 'embedding_size': 10, 'latent_dimension': 128, 'use_pretrain': False,
+              "mlp_hidden_size": [128], 'embedding_size': 10, 'latent_dimension': 128, 'use_pretrain': False,
               "anneal_cap": 0.2, "total_anneal_steps": 200000, "dropout_prob": 0.8, "alpha": 0}
 
     dataset = Dataset(config=config)
     vae = MultiVAE(config, dataset=dataset)
-    # print(history.summary())
-
-    data = dataset.rating
-    data["label"] = 0
-    print(data)
-    data.label[data.rating > 4] = 1
-    print(data)
-    data = data.to_numpy()
-    print(data)
     history_item_matrix, _, history_lens = dataset.history_item_matrix()
-    arange_tensor = np.arange(history_item_matrix.shape[1])
+    print(history_item_matrix.shape)
+    for t in range(10):
+        for step in range(0, len(history_item_matrix), 10000):
+            X = {"rating_matrix": history_item_matrix[step:step + 10000]}
 
-    vae.compile(optimizer=tf.keras.optimizers.RMSprop(0.001),
-                loss=tf.keras.losses.BinaryCrossentropy(),
-                metrics=['accuracy'])
-    vae.fit(data, data[:, :-1], batch_size=2048, epochs=5)
-    # for t in range(10):
-    #     for step in range(0, len(data), 10000):
-    #         X = {"user_id": np.array(data[step:step + 1000, 0]), \
-    #              "item_id": np.array(data[step: step + 1000, 1]), \
-    #              "label": np.array(data[step: step + 1000, 2])}
-    #
-    #         loss = vae.calculate_loss(X)
-    #         if step % 100 == 0:
-    #             print("epoch:{},step: {} | loss: {}".format(t, step, loss))
-    #
-    # history_item_matrix, _, history_lens = dataset.history_item_matrix()
-    # arange_tensor = np.arange(history_item_matrix.shape[1])
-    # # mask_mat = (arange_tensor < history_lens)
-    # print("history_matrix")
-    # print(history_item_matrix)
-    # print("length")
-    # print(history_lens)
-    # data = dataset.rating
+            loss = vae.calculate_loss(X)
+            if step % 100 == 0:
+                print("epoch:{},step: {} | loss: {}".format(t, step, loss))
