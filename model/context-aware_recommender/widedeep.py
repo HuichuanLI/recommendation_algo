@@ -136,8 +136,7 @@ def WDL(feature_columns, dnn_hidden_units=(256, 128, 64),
     dnn_logit = tf.keras.layers.Dense(
         1, use_bias=False, kernel_initializer=tf.keras.initializers.glorot_normal(seed=seed))(dnn_output)
 
-    output = tf.reduce_sum(dense_liner(input) + dnn_logit, axis=1)
-
+    output = tf.math.sigmoid(tf.reduce_sum(dense_liner(input) + dnn_logit, axis=1))
     model = Model(input_layers, output)
     return model
 

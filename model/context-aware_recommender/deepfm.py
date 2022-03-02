@@ -130,7 +130,6 @@ def deepFM(feature_columns, dnn_hidden_units=(256, 128, 64),
     emb_input_fm = tf.reshape(emb_input, shape=[-1, 5, 8])
     fm = BaseFactorizationMachine()
     output = tf.reduce_sum(tf.math.sigmoid(fm(emb_input_fm) + dense_liner(emb_input) + dnn_logit), axis=1)
-
     model = Model(input_layers, output)
     return model
 
