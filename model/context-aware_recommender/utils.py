@@ -373,3 +373,5 @@ class OutterProductLayer(Layer):
         base_config = super(OutterProductLayer, self).get_config()
         base_config.update(config)
         return base_config
+
+
