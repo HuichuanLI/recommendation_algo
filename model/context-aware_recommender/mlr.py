@@ -1,26 +1,35 @@
 # -*- coding:utf-8 -*-
-# @Time : 2022/2/28 11:18 下午
+# @Time : 2022/3/5 10:56 上午
 # @Author : huichuan LI
-# @File : widedeep.py
+# @File : mlr.py
 # @Software: PyCharm
-"""
-Reference:
-    [1] Cheng H T, Koc L, Harmsen J, et al. Wide & deep learning for recommender systems[C]//Proceedings of the 1st Workshop on Deep Learning for Recommender Systems. ACM, 2016: 7-10.(https://arxiv.org/pdf/1606.07792.pdf)
-"""
+# -*- coding:utf-8 -*-
+# @Time : 2022/2/28 11:19 下午
+# @Author : huichuan LI
+# @File : dcn.py
 import tensorflow as tf
 from tensorflow.keras.layers import *
 from tensorflow.keras.models import *
 from tensorflow.keras.layers import Layer
-
+import tensorflow as tf
+from tensorflow.python.keras import backend as K
+from tensorflow.python.keras.backend import batch_dot
+from tensorflow.python.keras.initializers import (Zeros, glorot_normal,
+                                                  glorot_uniform, TruncatedNormal)
 import pandas as pd
 import numpy as np
 from collections import namedtuple
+from utils import DNN
+from tensorflow.python.keras.regularizers import l2
+from tensorflow.python.keras.layers import Activation, dot
 
+"""
+Reference:
+    [1] Gai K, Zhu X, Li H, et al. Learning Piece-wise Linear Models from Large Scale Data for Ad Click Prediction[J]. arXiv preprint arXiv:1704.05194, 2017.(https://arxiv.org/abs/1704.05194)
+"""
 SparseFeat = namedtuple('SparseFeat', ['name', 'vocabulary_size', 'embedding_dim'])
 DenseFeat = namedtuple('DenseFeat', ['name', 'dimension'])
 VarLenSparseFeat = namedtuple('VarLenSparseFeat', ['name', 'vocabulary_size', 'embedding_dim', 'maxlen'])
-
-from utils import DNN
 
 
 def build_input_layers(feature_columns):
@@ -68,33 +77,21 @@ def build_embedding_layers(feature_columns, input_layer_dict):
     return embedding_layer_dict
 
 
-class BaseFactorizationMachine(Layer):
-    r"""Calculate FM result over the embeddings
-    Args:
-        reduce_sum: bool, whether to sum the result, default is True.
-    Input:
-        input_x: tensor, A 3D tensor with shape:``(batch_size,field_size,embed_dim)``.
-    Output
-        output: tensor, A 3D tensor with shape: ``(batch_size,1)`` or ``(batch_size, embed_dim)``.
-    """
-
-    def __init__(self, reduce_sum=True):
-        super(BaseFactorizationMachine, self).__init__()
-        self.reduce_sum = reduce_sum
-
-    def call(self, input_x):
-        square_of_sum = tf.reduce_sum(input_x, axis=1) ** 2
-        sum_of_square = tf.reduce_sum(input_x ** 2, axis=1)
-        output = square_of_sum - sum_of_square
-        if self.reduce_sum:
-            output = tf.reduce_sum(output, axis=1, keepdims=True)
-        output = 0.5 * output
-        return output
+def get_region_score(features, region_number):
+    region_logit = Concatenate(axis=1)([Dense(1)(features) for i in
+                                        range(region_number)])
+    return Activation('softmax')(region_logit)
 
 
-def WDL(feature_columns, dnn_hidden_units=(256, 128, 64),
-        l2_reg_linear=0.00001, l2_reg_embedding=0.00001, l2_reg_dnn=0, seed=1024, dnn_dropout=0,
-        dnn_activation='relu', dnn_use_bn=False, task='binary'):
+def get_learner_score(features, region_number):
+    region_logit = Concatenate(axis=1)([Dense(1)(features) for i in
+                                        range(region_number)])
+    return Activation('sigmoid')(region_logit)
+
+
+def MLR(feature_columns, base_feature_columns=None, region_num=4,
+        l2_reg_linear=1e-5, seed=1024, task='binary',
+        bias_feature_columns=None):
     input_layer_dict = build_input_layers(feature_columns)
 
     input_layers = list(input_layer_dict.values())
@@ -110,8 +107,6 @@ def WDL(feature_columns, dnn_hidden_units=(256, 128, 64),
     print(dnn_dense_input)
     # 将所有的dense特征拼接
     dnn_dense_input = Concatenate(axis=1)(dnn_dense_input)
-    dense_liner = Dense(1)
-
     # 构建embedding字典
     embedding_layer_dict = build_embedding_layers(feature_columns, input_layer_dict)
 
@@ -121,12 +116,12 @@ def WDL(feature_columns, dnn_hidden_units=(256, 128, 64),
 
     input = Concatenate(axis=1)([emb_input, dnn_dense_input])
 
-    dnn_output = DNN(dnn_hidden_units, dnn_activation, l2_reg_dnn, dnn_dropout, dnn_use_bn, seed=seed)(input)
+    region_score = get_region_score(input, region_num)
+    learner_score = get_learner_score(input, region_num)
 
-    dnn_logit = tf.keras.layers.Dense(
-        1, use_bias=False, kernel_initializer=tf.keras.initializers.glorot_normal(seed=seed))(dnn_output)
+    final_logit = dot([region_score, learner_score], axes=-1)
 
-    output = tf.math.sigmoid(tf.reduce_sum(dense_liner(input) + dnn_logit, axis=1))
+    output = tf.math.sigmoid(tf.keras.layers.Dense(1)(input) + final_logit)
     model = Model(input_layers, output)
     return model
 
@@ -164,12 +159,12 @@ if __name__ == "__main__":
     n_users = max(samples_data["user_id"]) + 1
     n_item = max(samples_data["movie_id"]) + 1
 
-    wdl = WDL(feature_columns)
+    mlr = MLR(feature_columns)
     #
-    wdl.compile('adam',
+    mlr.compile('adam',
                 loss=tf.keras.losses.BinaryCrossentropy(),
                 metrics=[tf.keras.metrics.BinaryAccuracy(),
                          tf.keras.metrics.AUC()])
-    wdl.fit(X_train, y_train, batch_size=64, epochs=10, validation_split=0.2, )
+    mlr.fit(X_train, y_train, batch_size=64, epochs=10, validation_split=0.2, )
     #
-    print(wdl.summary())
+    print(mlr.summary())
