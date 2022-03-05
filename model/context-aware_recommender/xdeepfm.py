@@ -9,7 +9,9 @@ Reference:
     [1] Lian J, Zhou X, Zhang F, et al. xDeepFM: Combining Explicit and Implicit Feature Interactions for Recommender Systems[J]. arXiv preprint arXiv:1803.05170, 2018.(https://arxiv.org/pdf/1803.05170.pdf)
 """
 from tensorflow.python.keras.initializers import RandomNormal
-
+from tensorflow.python.keras.initializers import (Zeros, glorot_normal,
+                                                  glorot_uniform, TruncatedNormal)
+from tensorflow.python.keras import backend as K
 import tensorflow as tf
 from tensorflow.keras.layers import *
 from tensorflow.keras.models import *
@@ -27,6 +29,133 @@ DenseFeat = namedtuple('DenseFeat', ['name', 'dimension'])
 VarLenSparseFeat = namedtuple('VarLenSparseFeat', ['name', 'vocabulary_size', 'embedding_dim', 'maxlen'])
 import itertools
 from utils import DNN
+
+
+class CIN(Layer):
+    """Compressed Interaction Network used in xDeepFM.This implemention is
+    adapted from code that the author of the paper published on https://github.com/Leavingseason/xDeepFM.
+      Input shape
+        - 3D tensor with shape: ``(batch_size,field_size,embedding_size)``.
+      Output shape
+        - 2D tensor with shape: ``(batch_size, featuremap_num)`` ``featuremap_num =  sum(self.layer_size[:-1]) // 2 + self.layer_size[-1]`` if ``split_half=True``,else  ``sum(layer_size)`` .
+      Arguments
+        - **layer_size** : list of int.Feature maps in each layer.
+        - **activation** : activation function used on feature maps.
+        - **split_half** : bool.if set to False, half of the feature maps in each hidden will connect to output unit.
+        - **seed** : A Python integer to use as random seed.
+      References
+        - [Lian J, Zhou X, Zhang F, et al. xDeepFM: Combining Explicit and Implicit Feature Interactions for Recommender Systems[J]. arXiv preprint arXiv:1803.05170, 2018.] (https://arxiv.org/pdf/1803.05170.pdf)
+    """
+
+    def __init__(self, layer_size=(128, 128), activation='relu', split_half=True, l2_reg=1e-5, seed=1024, **kwargs):
+        if len(layer_size) == 0:
+            raise ValueError(
+                "layer_size must be a list(tuple) of length greater than 1")
+        self.layer_size = layer_size
+        self.split_half = split_half
+        self.activation = activation
+        self.l2_reg = l2_reg
+        self.seed = seed
+        super(CIN, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        if len(input_shape) != 3:
+            raise ValueError(
+                "Unexpected inputs dimensions %d, expect to be 3 dimensions" % (len(input_shape)))
+
+        self.field_nums = [int(input_shape[1])]
+        self.filters = []
+        self.bias = []
+        for i, size in enumerate(self.layer_size):
+
+            self.filters.append(self.add_weight(name='filter' + str(i),
+                                                shape=[1, self.field_nums[-1]
+                                                       * self.field_nums[0], size],
+                                                dtype=tf.float32, initializer=glorot_uniform(
+                    seed=self.seed + i),
+                                                regularizer=l2(self.l2_reg)))
+
+            self.bias.append(self.add_weight(name='bias' + str(i), shape=[size], dtype=tf.float32,
+                                             initializer=tf.keras.initializers.Zeros()))
+
+            if self.split_half:
+                if i != len(self.layer_size) - 1 and size % 2 > 0:
+                    raise ValueError(
+                        "layer_size must be even number except for the last layer when split_half=True")
+
+                self.field_nums.append(size // 2)
+            else:
+                self.field_nums.append(size)
+
+        self.activation_layers = [tf.keras.layers.Activation(
+            self.activation) for _ in self.layer_size]
+
+        super(CIN, self).build(input_shape)  # Be sure to call this somewhere!
+
+    def call(self, inputs, **kwargs):
+
+        if K.ndim(inputs) != 3:
+            raise ValueError(
+                "Unexpected inputs dimensions %d, expect to be 3 dimensions" % (K.ndim(inputs)))
+
+        dim = int(inputs.get_shape()[-1])
+        hidden_nn_layers = [inputs]
+        final_result = []
+        split_tensor0 = tf.split(hidden_nn_layers[0], dim * [1], 2)
+        for idx, layer_size in enumerate(self.layer_size):
+            split_tensor = tf.split(hidden_nn_layers[-1], dim * [1], 2)
+
+            dot_result_m = tf.matmul(
+                split_tensor0, split_tensor, transpose_b=True)
+
+            dot_result_o = tf.reshape(
+                dot_result_m, shape=[dim, -1, self.field_nums[0] * self.field_nums[idx]])
+
+            dot_result = tf.transpose(dot_result_o, perm=[1, 0, 2])
+
+            curr_out = tf.nn.conv1d(
+                dot_result, filters=self.filters[idx], stride=1, padding='VALID')
+
+            curr_out = tf.nn.bias_add(curr_out, self.bias[idx])
+
+            curr_out = self.activation_layers[idx](curr_out)
+
+            curr_out = tf.transpose(curr_out, perm=[0, 2, 1])
+
+            if self.split_half:
+                if idx != len(self.layer_size) - 1:
+                    next_hidden, direct_connect = tf.split(
+                        curr_out, 2 * [layer_size // 2], 1)
+                else:
+                    direct_connect = curr_out
+                    next_hidden = 0
+            else:
+                direct_connect = curr_out
+                next_hidden = curr_out
+
+            final_result.append(direct_connect)
+            hidden_nn_layers.append(next_hidden)
+
+        result = tf.concat(final_result, axis=1)
+        result = tf.math.reduce_sum(result, -1, keepdims=False)
+
+        return result
+
+    def compute_output_shape(self, input_shape):
+        if self.split_half:
+            featuremap_num = sum(
+                self.layer_size[:-1]) // 2 + self.layer_size[-1]
+        else:
+            featuremap_num = sum(self.layer_size)
+        return (None, featuremap_num)
+
+    def get_config(self, ):
+
+        config = {'layer_size': self.layer_size, 'split_half': self.split_half, 'activation': self.activation,
+                  'seed': self.seed}
+        base_config = super(CIN, self).get_config()
+        base_config.update(config)
+        return base_config
 
 
 def build_input_layers(feature_columns):
@@ -79,9 +208,10 @@ def feature_embedding(fc_i, fc_j, embedding_dict, input_feature):
     return fc_i_embedding
 
 
-def ONN(feature_columns, dnn_hidden_units=(256, 128, 64, 1),
-        l2_reg_embedding=1e-5, l2_reg_linear=1e-5, l2_reg_dnn=0, dnn_dropout=0,
-        seed=1024, use_bn=True, reduce_sum=False, task='binary', ):
+def xDeepFM(feature_columns, dnn_hidden_units=(256, 128, 64),
+            cin_layer_size=(128, 128,), cin_split_half=True, cin_activation='relu', l2_reg_linear=0.00001,
+            l2_reg_embedding=0.00001, l2_reg_dnn=0, l2_reg_cin=0, seed=1024, dnn_dropout=0,
+            dnn_activation='relu', dnn_use_bn=False, task='binary'):
     input_layer_dict = build_input_layers(feature_columns)
 
     input_layers = list(input_layer_dict.values())
@@ -90,37 +220,7 @@ def ONN(feature_columns, dnn_hidden_units=(256, 128, 64, 1),
     sparse_feature_columns = list(filter(lambda x: isinstance(x, SparseFeat), feature_columns))
     dense_feature_columns = list(filter(lambda x: isinstance(x, DenseFeat), feature_columns))
 
-    sparse_embedding = {fc_j.name: {fc_i.name: Embedding(fc_j.vocabulary_size, fc_j.embedding_dim,
-                                                         embeddings_initializer=RandomNormal(
-                                                             mean=0.0, stddev=0.0001, seed=seed),
-                                                         embeddings_regularizer=l2(
-                                                             l2_reg_embedding),
-                                                         mask_zero=isinstance(fc_j,
-                                                                              VarLenSparseFeat),
-                                                         name='sparse_emb_' + str(
-                                                             fc_j.name) + '_' + fc_i.name)
-                                    for fc_i in
-                                    sparse_feature_columns} for fc_j in
-                        sparse_feature_columns}
-    embed_list = []
-    for fc_i, fc_j in itertools.combinations(sparse_feature_columns, 2):
-        i_input = input_layer_dict[fc_i.name]
-        # if fc_i.use_hash:
-        #     i_input = Hash(fc_i.vocabulary_size)(i_input)
-        j_input = input_layer_dict[fc_j.name]
-        # if fc_j.use_hash:
-        #     j_input = Hash(fc_j.vocabulary_size)(j_input)
-
-        fc_i_embedding = feature_embedding(fc_i, fc_j, sparse_embedding, i_input)
-        fc_j_embedding = feature_embedding(fc_j, fc_i, sparse_embedding, j_input)
-
-        element_wise_prod = multiply([fc_i_embedding, fc_j_embedding])
-        if reduce_sum:
-            element_wise_prod = Lambda(lambda element_wise_prod: K.sum(
-                element_wise_prod, axis=-1))(element_wise_prod)
-        embed_list.append(element_wise_prod)
     # 获取dense
-    print(embed_list)
     dnn_dense_input = []
     for fc in dense_feature_columns:
         dnn_dense_input.append(input_layer_dict[fc.name])
@@ -128,26 +228,28 @@ def ONN(feature_columns, dnn_hidden_units=(256, 128, 64, 1),
     dnn_dense_input = Concatenate(axis=1)(dnn_dense_input)
 
     # 构建embedding字典
-    # embedding_layer_dict = build_embedding_layers(feature_columns, input_layer_dict)
+    embedding_layer_dict = build_embedding_layers(feature_columns, input_layer_dict)
 
-    # dnn_sparse_embed_input = concat_embedding_list(sparse_feature_columns, input_layer_dict, embedding_layer_dict,
-    # flatten = True)
+    dnn_sparse_embed_input = concat_embedding_list(sparse_feature_columns, input_layer_dict, embedding_layer_dict,
+                                                   flatten=True)
 
-    # emb_input = Concatenate(axis=1)(dnn_sparse_embed_input)
+    dnn_sparse_embed_input = [tf.expand_dims(elem, axis=1) for elem in dnn_sparse_embed_input]
+    emb_input = Concatenate(axis=1)(dnn_sparse_embed_input)
+    print(emb_input)
+    # dnn_input = Concatenate(axis=1)([emb_input, dnn_dense_input])
 
-    # input = Concatenate(axis=1)([emb_input, dnn_dense_input])
-    ffm_out = tf.keras.layers.Flatten()(Concatenate(axis=1)(embed_list))
-    print("ffm_out")
-    print(ffm_out)
-    if use_bn:
-        ffm_out = tf.keras.layers.BatchNormalization()(ffm_out)
-    dnn_out = Concatenate(axis=1)([ffm_out, dnn_dense_input])
-    dnn_out = DNN(dnn_hidden_units, l2_reg=l2_reg_dnn, dropout_rate=dnn_dropout)(dnn_out)
-    # print("dnn_output")
-    # print(dnn_out)
-    # dnn_logit = Dense(1, use_bias=False, kernel_initializer=tf.keras.initializers.glorot_normal(seed))(dnn_out)
+    dnn_output = DNN(dnn_hidden_units, dnn_activation, l2_reg_dnn, dnn_dropout, dnn_use_bn, seed=seed)(
+        tf.reshape(emb_input, [-1, emb_input.shape[1] * emb_input.shape[2]]))
+    dnn_logit = tf.keras.layers.Dense(
+        1, use_bias=False, kernel_initializer=tf.keras.initializers.glorot_normal(seed))(dnn_output)
+    final_logit = dnn_logit
+    if len(cin_layer_size) > 0:
+        exFM_out = CIN(cin_layer_size, cin_activation,
+                       cin_split_half, l2_reg_cin, seed)(emb_input)
+        exFM_logit = tf.keras.layers.Dense(1, kernel_initializer=tf.keras.initializers.glorot_normal(seed))(exFM_out)
+        final_logit += exFM_logit
 
-    output = tf.math.sigmoid(dnn_out)
+    output = tf.math.sigmoid(final_logit)
     model = Model(input_layers, output)
 
     return model
@@ -186,12 +288,12 @@ if __name__ == "__main__":
     n_users = max(samples_data["user_id"]) + 1
     n_item = max(samples_data["movie_id"]) + 1
 
-    onn = ONN(feature_columns)
+    xdeepfm = xDeepFM(feature_columns)
     #
-    onn.compile('adam',
-                loss=tf.keras.losses.BinaryCrossentropy(),
-                metrics=[tf.keras.metrics.BinaryAccuracy(),
-                         tf.keras.metrics.AUC()])
-    onn.fit(X_train, y_train, batch_size=64, epochs=10, validation_split=0.2, )
+    xdeepfm.compile('adam',
+                    loss=tf.keras.losses.BinaryCrossentropy(),
+                    metrics=[tf.keras.metrics.BinaryAccuracy(),
+                             tf.keras.metrics.AUC()])
+    xdeepfm.fit(X_train, y_train, batch_size=64, epochs=10, validation_split=0.2, )
     #
-    print(onn.summary())
+    print(xdeepfm.summary())
