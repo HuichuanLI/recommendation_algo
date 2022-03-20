@@ -1,4 +1,9 @@
 # -*- coding:utf-8 -*-
+# @Time : 2022/3/19 10:12 下午
+# @Author : huichuan LI
+# @File : OMoEModel.py
+# @Software: PyCharm
+# -*- coding:utf-8 -*-
 # @Time : 2022/3/6 4:08 下午
 # @Author : huichuan LI
 # @File : sharebottom.py
@@ -86,7 +91,7 @@ def feature_embedding(fc_i, fc_j, embedding_dict, input_feature):
     return fc_i_embedding
 
 
-def MMOE(dnn_feature_columns, num_experts=3, expert_dnn_hidden_units=(256, 128), tower_dnn_hidden_units=(64,),
+def OMoEModel(dnn_feature_columns, num_experts=3, expert_dnn_hidden_units=(256, 128), tower_dnn_hidden_units=(64,),
          gate_dnn_hidden_units=(), l2_reg_embedding=0.00001, l2_reg_dnn=0, seed=1024, dnn_dropout=0,
          dnn_activation='relu',
          dnn_use_bn=False, task_types=('binary', 'binary'), task_names=('ctr', 'ctcvr')):
@@ -133,12 +138,15 @@ def MMOE(dnn_feature_columns, num_experts=3, expert_dnn_hidden_units=(256, 128),
 
     expert_concat = tf.keras.layers.Lambda(lambda x: tf.stack(x, axis=1))(expert_outs)  # None,num_experts,dim
     mmoe_outs = []
+    DNN_1 = DNN(gate_dnn_hidden_units, dnn_activation, l2_reg_dnn, dnn_dropout, dnn_use_bn, seed=seed,
+                         name='gate')
+    DNN_2 = tf.keras.layers.Dense(num_experts, use_bias=False, activation='softmax',
+                                         name='gate_softmax')
+
     for i in range(num_tasks):  # one mmoe layer: nums_tasks = num_gates
         # build gate layers
-        gate_input = DNN(gate_dnn_hidden_units, dnn_activation, l2_reg_dnn, dnn_dropout, dnn_use_bn, seed=seed,
-                         name='gate_' + task_names[i])(dnn_input)
-        gate_out = tf.keras.layers.Dense(num_experts, use_bias=False, activation='softmax',
-                                         name='gate_softmax_' + task_names[i])(gate_input)
+        gate_input =DNN_1(dnn_input)
+        gate_out = DNN_2(gate_input)
         gate_out = tf.keras.layers.Lambda(lambda x: tf.expand_dims(x, axis=-1))(gate_out)
 
         # gate multiply the expert
@@ -170,7 +178,7 @@ if __name__ == "__main__":
                     'instance_weight', 'mig_chg_msa', 'mig_chg_reg', 'mig_move_reg', 'mig_same', 'mig_prev_sunbelt',
                     'num_emp', 'fam_under_18', 'country_father', 'country_mother', 'country_self', 'citizenship',
                     'own_or_self', 'vet_question', 'vet_benefits', 'weeks_worked', 'year', 'income_50k']
-    samples_data = pd.read_csv("data/example.txt", sep=",", header=None, names=column_names)
+    samples_data = pd.read_csv("../data/example.txt", sep=",", header=None, names=column_names)
     print(samples_data)
     samples_data['label_income'] = samples_data['income_50k'].map({' - 50000.': 0, ' 50000+.': 1})
     samples_data['label_marital'] = samples_data['marital_stat'].apply(lambda x: 1 if x == ' Never married' else 0)
@@ -211,7 +219,7 @@ if __name__ == "__main__":
     test_model_input = {name: test[name] for name in feature_names}
 
     # 4.Define Model,train,predict and evaluate
-    model = MMOE(fixlen_feature_columns, task_types=['binary', 'binary'],
+    model = OMoEModel(fixlen_feature_columns, task_types=['binary', 'binary'],
                  task_names=['label_income', 'label_marital'])
 
     model.compile("adam", loss=["binary_crossentropy", "binary_crossentropy"],

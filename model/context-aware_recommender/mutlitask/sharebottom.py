@@ -155,7 +155,7 @@ if __name__ == "__main__":
                     'instance_weight', 'mig_chg_msa', 'mig_chg_reg', 'mig_move_reg', 'mig_same', 'mig_prev_sunbelt',
                     'num_emp', 'fam_under_18', 'country_father', 'country_mother', 'country_self', 'citizenship',
                     'own_or_self', 'vet_question', 'vet_benefits', 'weeks_worked', 'year', 'income_50k']
-    samples_data = pd.read_csv("data/example.txt", sep=",", header=None, names=column_names)
+    samples_data = pd.read_csv("../data/example.txt", sep=",", header=None, names=column_names)
     print(samples_data)
     samples_data['label_income'] = samples_data['income_50k'].map({' - 50000.': 0, ' 50000+.': 1})
     samples_data['label_marital'] = samples_data['marital_stat'].apply(lambda x: 1 if x == ' Never married' else 0)

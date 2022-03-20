@@ -1,14 +1,13 @@
 # -*- coding:utf-8 -*-
-# @Time : 2022/3/6 7:29 下午
+# @Time : 2022/3/20 1:54 下午
 # @Author : huichuan LI
-# @File : ple.py
+# @File : singletask.py
+# @Software: PyCharm
 """
 Author:
-    lihuichuan
+    lihuuchuan
 Reference:
-    [1] Tang H, Liu J, Zhao M, et al. Progressive layered extraction (ple): A novel multi-task learning (mtl) model for personalized recommendations[C]//Fourteenth ACM Conference on Recommender Systems. 2020.(https://dl.acm.org/doi/10.1145/3383313.3412236)
 """
-
 from tensorflow.python.keras.initializers import RandomNormal
 from tensorflow.python.keras.initializers import (Zeros, glorot_normal,
                                                   glorot_uniform, TruncatedNormal)
@@ -17,7 +16,6 @@ import tensorflow as tf
 from tensorflow.keras.layers import *
 from tensorflow.keras.models import *
 from tensorflow.keras.layers import Layer
-from utils import OutterProductLayer, InnerProductLayer
 import pandas as pd
 import numpy as np
 from collections import namedtuple
@@ -86,11 +84,9 @@ def feature_embedding(fc_i, fc_j, embedding_dict, input_feature):
     return fc_i_embedding
 
 
-def PLE(dnn_feature_columns, shared_expert_num=1, specific_expert_num=1, num_levels=2,
-        expert_dnn_hidden_units=(256,), tower_dnn_hidden_units=(64,), gate_dnn_hidden_units=(),
-        l2_reg_embedding=0.00001,
-        l2_reg_dnn=0, seed=1024, dnn_dropout=0, dnn_activation='relu', dnn_use_bn=False,
-        task_types=('binary', 'binary'), task_names=('ctr', 'ctcvr')):
+def SingleTaskModel(dnn_feature_columns, bottom_dnn_hidden_units=(256, 128), tower_dnn_hidden_units=(64,),
+                 l2_reg_embedding=0.00001, l2_reg_dnn=0, seed=1024, dnn_dropout=0, dnn_activation='relu',
+                 dnn_use_bn=False, task_types=('binary', 'binary'), task_names=('ctr', 'ctcvr')):
     num_tasks = len(task_names)
     if num_tasks <= 1:
         raise ValueError("num_tasks must be greater than 1")
@@ -107,6 +103,9 @@ def PLE(dnn_feature_columns, shared_expert_num=1, specific_expert_num=1, num_lev
 
     input_layer_dict = build_input_layers(dnn_feature_columns)
     input_layers = list(input_layer_dict.values())
+    print(input_layer_dict)
+    print(sparse_feature_columns)
+    print(dense_feature_columns)
     # 获取dense
     dnn_dense_input = []
     for fc in dense_feature_columns:
@@ -122,100 +121,25 @@ def PLE(dnn_feature_columns, shared_expert_num=1, specific_expert_num=1, num_lev
 
     # dnn_sparse_embed_input = [tf.expand_dims(elem, axis=1) for elem in dnn_sparse_embed_input]
     emb_input = Concatenate(axis=1)(dnn_sparse_embed_input)
+    print(emb_input)
+    print(dnn_dense_input)
     dnn_input = Concatenate(axis=1)([emb_input, dnn_dense_input])
 
-    # single Extraction Layer
-    def cgc_net(inputs, level_name, is_last=False):
-        # inputs: [task1, task2, ... taskn, shared task]
-        specific_expert_outputs = []
-        # build task-specific expert layer
-        for i in range(num_tasks):
-            for j in range(specific_expert_num):
-                expert_network = DNN(expert_dnn_hidden_units, dnn_activation, l2_reg_dnn, dnn_dropout, dnn_use_bn,
-                                     seed=seed,
-                                     name=level_name + 'task_' + task_names[i] + '_expert_specific_' + str(j))(
-                    inputs[i])
-                specific_expert_outputs.append(expert_network)
+    bottom = [DNN(bottom_dnn_hidden_units, dnn_activation, l2_reg_dnn, dnn_dropout, dnn_use_bn, seed=seed) for i in
+              range(num_tasks)]
 
-        # build task-shared expert layer
-        shared_expert_outputs = []
-        for k in range(shared_expert_num):
-            expert_network = DNN(expert_dnn_hidden_units, dnn_activation, l2_reg_dnn, dnn_dropout, dnn_use_bn,
-                                 seed=seed,
-                                 name=level_name + 'expert_shared_' + str(k))(inputs[-1])
-            shared_expert_outputs.append(expert_network)
+    tower = [DNN(tower_dnn_hidden_units, dnn_activation, l2_reg_dnn, dnn_dropout, dnn_use_bn, seed=seed,
+                 name='tower_' + str(i)) for i in range(num_tasks)]
 
-        # task_specific gate (count = num_tasks)
-        cgc_outs = []
-        for i in range(num_tasks):
-            # concat task-specific expert and task-shared expert
-            cur_expert_num = specific_expert_num + shared_expert_num
-            # task_specific + task_shared
-            cur_experts = specific_expert_outputs[
-                          i * specific_expert_num:(i + 1) * specific_expert_num] + shared_expert_outputs
-
-            expert_concat = tf.keras.layers.Lambda(lambda x: tf.stack(x, axis=1))(cur_experts)
-
-            # build gate layers
-            gate_input = DNN(gate_dnn_hidden_units, dnn_activation, l2_reg_dnn, dnn_dropout, dnn_use_bn,
-                             seed=seed,
-                             name=level_name + 'gate_specific_' + task_names[i])(
-                inputs[i])  # gate[i] for task input[i]
-            gate_out = tf.keras.layers.Dense(cur_expert_num, use_bias=False, activation='softmax',
-                                             name=level_name + 'gate_softmax_specific_' + task_names[i])(gate_input)
-            gate_out = tf.keras.layers.Lambda(lambda x: tf.expand_dims(x, axis=-1))(gate_out)
-
-            # gate multiply the expert
-            gate_mul_expert = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(x[0] * x[1], axis=1, keepdims=False),
-                                                     name=level_name + 'gate_mul_expert_specific_' + task_names[i])(
-                [expert_concat, gate_out])
-            cgc_outs.append(gate_mul_expert)
-
-        # task_shared gate, if the level not in last, add one shared gate
-        if not is_last:
-            cur_expert_num = num_tasks * specific_expert_num + shared_expert_num
-            cur_experts = specific_expert_outputs + shared_expert_outputs  # all the expert include task-specific expert and task-shared expert
-
-            expert_concat = tf.keras.layers.Lambda(lambda x: tf.stack(x, axis=1))(cur_experts)
-
-            # build gate layers
-            gate_input = DNN(gate_dnn_hidden_units, dnn_activation, l2_reg_dnn, dnn_dropout, dnn_use_bn,
-                             seed=seed,
-                             name=level_name + 'gate_shared')(inputs[-1])  # gate for shared task input
-
-            gate_out = tf.keras.layers.Dense(cur_expert_num, use_bias=False, activation='softmax',
-                                             name=level_name + 'gate_softmax_shared')(gate_input)
-            gate_out = tf.keras.layers.Lambda(lambda x: tf.expand_dims(x, axis=-1))(gate_out)
-
-            # gate multiply the expert
-            gate_mul_expert = tf.keras.layers.Lambda(lambda x: tf.math.reduce_sum(x[0] * x[1], axis=1, keepdims=False),
-                                                     name=level_name + 'gate_mul_expert_shared')(
-                [expert_concat, gate_out])
-
-            cgc_outs.append(gate_mul_expert)
-        return cgc_outs
-
-        # build Progressive Layered Extraction
-
-    ple_inputs = [dnn_input] * (num_tasks + 1)  # [task1, task2, ... taskn, shared task]
-    ple_outputs = []
-    for i in range(num_levels):
-        if i == num_levels - 1:  # the last level
-            ple_outputs = cgc_net(inputs=ple_inputs, level_name='level_' + str(i) + '_', is_last=True)
-        else:
-            ple_outputs = cgc_net(inputs=ple_inputs, level_name='level_' + str(i) + '_', is_last=False)
-            ple_inputs = ple_outputs
-
-    task_outs = []
-    for task_type, task_name, ple_out in zip(task_types, task_names, ple_outputs):
-        # build tower layer
-        tower_output = DNN(tower_dnn_hidden_units, dnn_activation, l2_reg_dnn, dnn_dropout, dnn_use_bn, seed=seed,
-                           name='tower_' + task_name)(ple_out)
+    tasks_output = []
+    for i, (task_type, task_name) in enumerate(zip(task_types, task_names)):
+        feat = bottom[i](dnn_input)
+        tower_output = tower[i](feat)
         logit = tf.keras.layers.Dense(1, use_bias=False, activation=None)(tower_output)
         output = tf.math.sigmoid(logit)
-        task_outs.append(output)
+        tasks_output.append(output)
 
-    model = tf.keras.models.Model(inputs=input_layers, outputs=task_outs)
+    model = tf.keras.models.Model(inputs=input_layers, outputs=tasks_output)
 
     return model
 
@@ -229,7 +153,7 @@ if __name__ == "__main__":
                     'instance_weight', 'mig_chg_msa', 'mig_chg_reg', 'mig_move_reg', 'mig_same', 'mig_prev_sunbelt',
                     'num_emp', 'fam_under_18', 'country_father', 'country_mother', 'country_self', 'citizenship',
                     'own_or_self', 'vet_question', 'vet_benefits', 'weeks_worked', 'year', 'income_50k']
-    samples_data = pd.read_csv("data/example.txt", sep=",", header=None, names=column_names)
+    samples_data = pd.read_csv("../data/example.txt", sep=",", header=None, names=column_names)
     print(samples_data)
     samples_data['label_income'] = samples_data['income_50k'].map({' - 50000.': 0, ' 50000+.': 1})
     samples_data['label_marital'] = samples_data['marital_stat'].apply(lambda x: 1 if x == ' Never married' else 0)
@@ -270,12 +194,10 @@ if __name__ == "__main__":
     test_model_input = {name: test[name] for name in feature_names}
 
     # 4.Define Model,train,predict and evaluate
-    model = PLE(fixlen_feature_columns, task_types=['binary', 'binary'],
-                task_names=['label_income', 'label_marital'])
-
+    model = SingleTaskModel(fixlen_feature_columns, task_types=['binary', 'binary'],
+                         task_names=['label_income', 'label_marital'])
     model.compile("adam", loss=["binary_crossentropy", "binary_crossentropy"],
                   metrics=['binary_crossentropy'], )
-    print(model.summary())
 
     history = model.fit(train_model_input, [train['label_income'].values, train['label_marital'].values],
                         batch_size=256, epochs=10, verbose=2, validation_split=0.2)
